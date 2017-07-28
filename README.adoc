@@ -1,0 +1,33 @@
+= sparkstreamtest
+
+Proof of concept for Spark Streaming to process YT channel stats as they get harvested
+
+== What the test does
+
+== Running the test
+
+. Start up MySQL locally with the typical pixuser credentials. Create 'yt' database and in there create two tables:
+
+    create table yt_daily (harvest_ts datetime NOT NULL, channel varchar(100) NOT NULL, date datetime NOT NULL, subs int NOT NULL, PRIMARY KEY(channel, date) );
+    create table yt_monthly (harvest_ts datetime NOT NULL, channel varchar(100) NOT NULL, year_and_month varchar(10) NOT NULL, subs int NOT NULL, PRIMARY KEY(channel, year_and_month) );
++
+. Download and install Kafka (https://kafka.apache.org/downloads). For example download https://www.apache.org/dyn/closer.cgi?path=/kafka/0.11.0.0/kafka_2.11-0.11.0.0.tgz and decompress to ~/kafka_2.11-0.11.0.0
+. From the Kafka's home directory (e.g. ~/kafka_2.11-0.11.0.0) execute these in 2 different shell windows:
+
+    ./bin/zookeeper-server-start.sh ./config/zookeeper.properties
+    ./bin/kafka-server-start.sh ./config/server.properties
++
+. Download and install Spark (https://spark.apache.org/downloads.html). For example download https://d3kbcqa49mib13.cloudfront.net/spark-2.2.0-bin-hadoop2.7.tgz and decompress to ~/spark-2.2.0-bin-hadoop2.7
+. You will need to create two virtual environments one for the command-line scripts and one for packaging python
+libs that Spark will need to use. Spark will by default use system's default Python interpreter and environment.
+If you are running python 2.7 for your default system python version (you can find out by running *python -V*)
+then you should use *spark_requirements_py27.txt* to create a 2.7 environment. Lets say you created this environment
+under *~/sparkpackages* and *pip install -r spark_requirements_py27.txt* to install the packages there. Now you need
+to take all those packages and put them in a .zip file that will later be used by Spark to distribute the libs
+to the workers. This can be done by going to the site-packages directory inside the virtual env
+(e.g. ) and running:
+
+ cd ~/sparkpackages/lib/python2.7/site-packages
+ zip -r /tmp/python-deps.zip .
++
+. more details needed here ..
