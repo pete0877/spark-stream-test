@@ -15,7 +15,7 @@ output_topic = "yt_daily"
 output_topic_as_str = "yt_daily_as_str"
 app_name = "stream_agg_log_to_daily"
 
-yt_daily_avro = """
+yt_daily_avro = """ 
 {
  "namespace": "yt_daily_avro",
  "type": "record",
