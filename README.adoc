@@ -1,33 +1,89 @@
-= sparkstreamtest
+= Spark Streaming Test / POC
 
-Proof of concept for Spark Streaming to process YT channel stats as they get harvested
+Proof of concept for Spark Streaming to process YT channel stats as they get harvested.
 
 == What the test does
 
-== Running the test
+This little experiment uses Spark & Kafka to process stream of YT-like metadata / stats channel records. These records look like this:
 
+ {"harvest_ts": "2017-08-02T02:00:00", "subs": 1947, "yt_channel_id": "new_york_times"}
+
+Test simulates a harvest record being published multiple times per day for a given channel (default configuration is 3 times per day).
+
+The ends result of this whole proof of concept is to be able to store in MySQL two tables of data:
+. Daily stats - for a given date, say "2017-08-02", what was the latest harvested data point per channel.
+. Monthly stats - for a given month, say "2017-08", what was the latest harvested data point per channel.
+
+For simplicity we only keep track of number of subscribers per YT channel ("subs").
+
+Here is a quick outline of the scripts and what they do (in a logical order that information is processed). Any time "produces" or "consumes" are used, we are referring to Kafka. Some of the script use AVRO some do not (work in progress).
+. *script_producer_log.py* - offline (not Spark) script that produces the harvest records with some dalays built in and number of subscribers increasing in random steps. Configurable on time delays and how many times per day each channel is harvested.
+. *stream_agg_log_to_daily.py* - Spark script that map-reduces the log data into daily maximums (based on the harvest timestamp) using stream time windows of 10 seconds. Results are produced onto Kafka.
+. *script_store_daily.py* - offline script that consumes the daily maximums data and stores them into MySQL. The operation is an UPSERT but has additional built in logic to skip updates if the existing row seems to have been harvested after the consumed data point.
+. *stream_agg_daily_to_monthly.py* - Spark script that consumes the daily maximums data and map-reduces them to monthly maximums (based on the harvest timestamp) using a stream window of 30 seconds. Results are produced onto Kafka.
+. *script_store_monthly.py* - Same as script_store_daily.py for but for monthly data points.
+
+== Installation
+
+Note: Whenever local path examples are given below (like "~/py/spark-stream-test", you are free to choose different paths of course but just remember that those paths are referenced somewhere below so you will likely need to change at least one other reference),
+
+. Clone this repo to a local folder (e.g. ~/py/spark-stream-test)
 . Start up MySQL locally with the typical pixuser credentials. Create 'yt' database and in there create two tables:
 
     create table yt_daily (harvest_ts datetime NOT NULL, channel varchar(100) NOT NULL, date datetime NOT NULL, subs int NOT NULL, PRIMARY KEY(channel, date) );
+
     create table yt_monthly (harvest_ts datetime NOT NULL, channel varchar(100) NOT NULL, year_and_month varchar(10) NOT NULL, subs int NOT NULL, PRIMARY KEY(channel, year_and_month) );
 +
 . Download and install Kafka (https://kafka.apache.org/downloads). For example download https://www.apache.org/dyn/closer.cgi?path=/kafka/0.11.0.0/kafka_2.11-0.11.0.0.tgz and decompress to ~/kafka_2.11-0.11.0.0
-. From the Kafka's home directory (e.g. ~/kafka_2.11-0.11.0.0) execute these in 2 different shell windows:
-
-    ./bin/zookeeper-server-start.sh ./config/zookeeper.properties
-    ./bin/kafka-server-start.sh ./config/server.properties
-+
 . Download and install Spark (https://spark.apache.org/downloads.html). For example download https://d3kbcqa49mib13.cloudfront.net/spark-2.2.0-bin-hadoop2.7.tgz and decompress to ~/spark-2.2.0-bin-hadoop2.7
+. Download from maven.org the JAR library that Spark will use to talk to Kafka (http://search.maven.org/remotecontent?filepath=org/apache/spark/spark-streaming-kafka-0-8-assembly_2.11/2.2.0/spark-streaming-kafka-0-8-assembly_2.11-2.2.0.jar). Place it under ~/jars/ for example.
 . You will need to create two virtual environments one for the command-line scripts and one for packaging python
 libs that Spark will need to use. Spark will by default use system's default Python interpreter and environment.
 If you are running python 2.7 for your default system python version (you can find out by running *python -V*)
-then you should use *spark_requirements_py27.txt* to create a 2.7 environment. Lets say you created this environment
-under *~/sparkpackages* and *pip install -r spark_requirements_py27.txt* to install the packages there. Now you need
-to take all those packages and put them in a .zip file that will later be used by Spark to distribute the libs
-to the workers. This can be done by going to the site-packages directory inside the virtual env
-(e.g. ) and running:
+then you should use *spark_requirements_py27.txt* to create a 2.7 environment.
+As an alternative you can figure out how to configure Spark to execute particular Python and virual env and maybe just use one requirements.txt file.
+Lets say you created this Spark-python environment under *~/sparkpackages*. Then run *pip install -r spark_requirements_py27.txt* to install the packages there. Now you need to take all those packages and put them in a .zip file that will later be used by Spark to distribute the libs to the workers. This can be done by going to the site-packages directory inside the virtual env (e.g. ) and running:
 
  cd ~/sparkpackages/lib/python2.7/site-packages
  zip -r /tmp/python-deps.zip .
 +
-. more details needed here ..
+. The second Python environment is used for running command-line scripts (see script_*.py) files that don't interact with Spark. Simply create a Python 3 environment as you normally would and use scripts_requirements_py3.txt for it.
+
+
+== Running
+
+. From Kafka's home directory (e.g. ~/kafka_2.11-0.11.0.0) execute these in 2 different shell windows:
+
+    ./bin/zookeeper-server-start.sh ./config/zookeeper.properties
+
+    ./bin/kafka-server-start.sh ./config/server.properties
++
+. Start the harvest data producer script:
+
+    python script_producer_log.py
++
+. Start the script responsible for storing the daily stats into MySQL:
+
+    python script_store_daily.py
++
+. Start the script responsible for storing the monthly stats into MySQL:
+
+    python script_store_monthly.py
++
+. From Spark's home directory (e.g. ~/spark-2.2.0-bin-hadoop2.7) start the Spark streaming script to find daily and monthly maximums (two seperate shell sessions):
+
+    ./bin/spark-submit --jars ~/jars/spark-streaming-kafka-0-8-assembly_2.11-2.2.0.jar --py-files /tmp/python-deps.zip  ~/py/spark-stream-test/stream_agg_log_to_daily.py 2>&1 > /tmp/stream_agg_log_to_daily.log
+
+    ./bin/spark-submit --jars ~/jars/spark-streaming-kafka-0-8-assembly_2.11-2.2.0.jar --py-files /tmp/python-deps.zip  ~/py/spark-stream-test/stream_agg_daily_to_monthly.py 2>&1 > /tmp/stream_agg_daily_to_monthly.log
+
+Note that if any errors occur on Spark worker processes during the execution of the given .py script, the errors will be reported to the .log file specified above.
+
+== Future improvements
+
+. Not everything is using AVRO schema yet. There should be farily esay way to embad AVRO decoder into Spark's stream message decoder. See  raw_stream = KafkaUtils.createStream(...., valueDecoder=avro_value_decoder) .. just needs some debugging.
+. Look into using Confluent.io's distribution of Kafka which comes with few key benefits:
+.. AVRO schema registry
+.. Bunch of Kafka Connect Sink adapters to write to various storage destinations automatically.
+. If this design pattern proves beneficial, perhaps writing a custom sink connector that is sensitive to the freshness of data (harvest_ts) would make sense.
+. General code clean-up (extract and share some of the functions that have been copy-pasted between scrtipts, etc).
+
